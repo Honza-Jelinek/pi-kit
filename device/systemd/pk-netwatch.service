@@ -1,0 +1,7 @@
+[Unit]
+Description=pikit: hlídač Tailscale
+After=network-online.target tailscaled.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/pikit/bin/pk-netwatch

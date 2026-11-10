@@ -1,0 +1,5 @@
+# Seznam zařízení obsahuje adresy a zákazníky, do repa nepatří.
+devices.csv
+logs/
+__pycache__/
+.pytest_cache/

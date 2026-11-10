@@ -1,0 +1,9 @@
+#!/bin/sh
+# Spouštěč příkazu pikit pro Git Bash (a Linux/macOS). Pro PowerShell je vedle pikit.cmd.
+script="$(dirname "$0")/pikit.py"
+if command -v cygpath >/dev/null 2>&1; then
+  script=$(cygpath -w "$script")
+  # Git Bash by jinak linuxové cesty v argumentech (/etc/hostname) přepsal na windowsové.
+  export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
+fi
+exec python "$script" "$@"

@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Firewall zařízení pikit (ufw).
+#
+#   pk-firewall apply    nastaví pravidla podle /etc/pikit/firewall.conf
+#   pk-firewall lock     zavře SSH z místní sítě, dál jen přes Tailscale
+#   pk-firewall unlock   znovu otevře SSH z místní sítě (servis na místě, nouze)
+#   pk-firewall status
+#
+# Pravidla:
+#   - příchozí spojení zakázaná, odchozí povolená
+#   - SSH (22) jen přes rozhraní tailscale0
+#   - porty aplikace z TAILNET_PORTS jen přes tailscale0
+#   - UDP 41641 pro přímá spojení Tailscale (bez něj jede Tailscale přes relay, pomaleji)
+#   - porty služby z LAN_PORTS otevřené do sítě zákazníka
+#   - dokud není "lock", je SSH povolené i z místní sítě (první nastavení jde přes LAN)
+set -euo pipefail
+[ "$(id -u)" -eq 0 ] || exec sudo -n "$0" "$@"
+
+CONF=/etc/pikit/firewall.conf
+LOCK=/etc/pikit/ssh-tailscale-only
+LAN_PORTS=""
+TAILNET_PORTS=""
+# shellcheck disable=SC1090
+[ -f "$CONF" ] && . "$CONF"
+
+apply() {
+  ufw --force reset >/dev/null
+  ufw default deny incoming >/dev/null
+  ufw default allow outgoing >/dev/null
+  ufw allow in on tailscale0 to any port 22 proto tcp comment 'SSH jen pres Tailscale' >/dev/null
+  for p in $TAILNET_PORTS; do
+    ufw allow in on tailscale0 to any port "$p" proto tcp comment 'App pres Tailscale' >/dev/null
+  done
+  ufw allow 41641/udp comment 'Tailscale prima spojeni' >/dev/null
+  for p in $LAN_PORTS; do
+    [[ "$p" == */* ]] || p="$p/tcp"
+    ufw allow "$p" comment 'App do LAN' >/dev/null
+  done
+  if [ ! -f "$LOCK" ]; then
+    ufw allow 22/tcp comment 'SSH z LAN jen do overeni Tailscale' >/dev/null
+  fi
+  ufw --force enable >/dev/null
+  # ufw reset si dělá zálohy pravidel, nenecháváme je hromadit
+  find /etc/ufw -maxdepth 1 -name '*.rules.[0-9]*' -delete 2>/dev/null || true
+}
+
+case "${1:-status}" in
+  apply)  apply; echo "Firewall nastaven." ;;
+  lock)   mkdir -p /etc/pikit; touch "$LOCK"; apply; echo "SSH z místní sítě zavřeno, jen přes Tailscale." ;;
+  unlock) rm -f "$LOCK"; apply; echo "SSH z místní sítě znovu otevřeno." ;;
+  status) ufw status verbose ;;
+  *)      sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
+esac

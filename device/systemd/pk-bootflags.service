@@ -1,0 +1,10 @@
+[Unit]
+Description=pikit: servisní přepínače na SD kartě
+After=ufw.service local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/pikit/bin/pk-bootflags
+
+[Install]
+WantedBy=multi-user.target

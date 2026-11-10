@@ -1,0 +1,5 @@
+# Skripty pro Raspberry Pi a spouštěč pro Git Bash musí mít unixové konce řádků.
+*.sh text eol=lf
+device/** text eol=lf
+bin/pikit text eol=lf
+bin/*.cmd text eol=crlf

@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Spouštěč nástrojů pikit na zařízení. Volá ho příkaz `pikit` z PC přes SSH.
+#
+#   pk-tool list                              nástroje: úroveň, jméno, popis (oddělené tabulátorem)
+#   pk-tool help <nástroj>                    hlavička nástroje (popis a použití)
+#   pk-tool run <úroveň> <nástroj> [arg...]   spustí nástroj, úroveň musí sedět
+#
+# Nástroj je skript $TOOLS/<jméno>.sh, který začíná hlavičkou:
+#   # tool:  jméno
+#   # level: read | change | danger
+#   # desc:  krátký popis na jeden řádek
+#   # args:  použití
+# Další řádky komentáře hned pod hlavičkou se ukážou v `help`.
+set -euo pipefail
+TOOLS="${PK_TOOLS_DIR:-/opt/pikit/tools}"
+
+header() { awk 'NR==1 && /^#!/ {next} /^#/ {sub(/^# ?/, ""); print; next} {exit}' "$1"; }
+field()  { header "$1" | sed -n "s/^$2: *//p" | head -n1; }
+
+tool_file() {
+  if [[ ! "${1:-}" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+    echo "Neplatné jméno nástroje: '${1:-}'" >&2; exit 2
+  fi
+  local f="$TOOLS/$1.sh"
+  if [ ! -f "$f" ]; then
+    echo "Nástroj '$1' na tomhle zařízení není. Seznam: pikit tools <zařízení>" >&2; exit 3
+  fi
+  printf '%s\n' "$f"
+}
+
+usage() { sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//' >&2; }
+
+cmd="${1:-}"
+[ $# -gt 0 ] && shift
+case "$cmd" in
+  list)
+    for f in "$TOOLS"/*.sh; do
+      [ -f "$f" ] || continue
+      level=$(field "$f" level)
+      case "$level" in read) rank=1;; change) rank=2;; danger) rank=3;; *) rank=9;; esac
+      printf '%s\t%s\t%s\t%s\n' "$rank" "$level" "$(field "$f" tool)" "$(field "$f" desc)"
+    done | sort -t $'\t' -k1,1n -k3,3 | cut -f2-
+    ;;
+  help)
+    header "$(tool_file "${1:-}")"
+    ;;
+  run)
+    if [ $# -lt 2 ]; then usage; exit 2; fi
+    level="$1"; name="$2"; shift 2
+    f=$(tool_file "$name")
+    declared=$(field "$f" level)
+    if [ "$declared" != "$level" ]; then
+      echo "Nástroj '$name' má úroveň '$declared', ne '$level'. Spusť: pikit $declared <zařízení> $name" >&2
+      exit 4
+    fi
+    # Každé spuštění do systémového logu: journalctl -t pikit-tool
+    logger -t pikit-tool -- "uzivatel=$(id -un) uroven=$level nastroj=$name argumenty=$*" 2>/dev/null || true
+    exec bash "$f" "$@"
+    ;;
+  *)
+    usage; exit 2
+    ;;
+esac

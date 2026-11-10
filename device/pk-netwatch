@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Hlídač Tailscale. Spouští ho systemd timer pk-netwatch.timer každé 2 minuty.
+#
+# Když Tailscale neběží a internet přitom funguje:
+#   po 3. neúspěchu (~6 min) restartuje tailscaled, po 6. (~12 min) znovu,
+#   po 10. (~20 min) restartuje celé Pi, nejvýš jednou za 6 hodin.
+#   Pak dál zkouší restart tailscaled každých ~30 minut.
+# Bez internetu nic nerestartuje, jen čeká (pomoct by to nemohlo).
+# Když Tailscale chce nové přihlášení (vypršel klíč), restart nepomůže, jen to zapíše do logu.
+# Log: journalctl -t pikit-netwatch
+set -uo pipefail
+
+STATE_DIR="${PK_NETWATCH_STATE:-/var/lib/pikit/netwatch}"
+mkdir -p "$STATE_DIR"
+log() { logger -t pikit-netwatch -- "$*"; }
+
+state=$(tailscale status --json 2>/dev/null | grep -m1 -o '"BackendState": *"[^"]*"' | sed 's/.*: *"//; s/"$//')
+
+if [ "$state" = "Running" ]; then
+  if [ -s "$STATE_DIR/fails" ] && [ "$(cat "$STATE_DIR/fails")" != "0" ]; then
+    log "Tailscale znovu běží."
+  fi
+  echo 0 > "$STATE_DIR/fails"
+  exit 0
+fi
+
+case "$state" in
+  NeedsLogin|NeedsMachineAuth)
+    log "Tailscale potřebuje nové přihlášení (stav $state). Vypnul jsi Key expiry v admin konzoli?"
+    exit 0 ;;
+esac
+
+# Funguje vůbec internet? Jakákoli HTTP odpověď stačí.
+if ! curl -sS --max-time 10 -o /dev/null https://controlplane.tailscale.com/ 2>/dev/null; then
+  echo 0 > "$STATE_DIR/fails"
+  log "Tailscale neběží (stav ${state:-neznámý}), ale není ani internet. Čekám."
+  exit 0
+fi
+
+fails=$(( $(cat "$STATE_DIR/fails" 2>/dev/null || echo 0) + 1 ))
+echo "$fails" > "$STATE_DIR/fails"
+log "Tailscale neběží (stav ${state:-neznámý}), internet ano. Neúspěch č. $fails."
+
+if [ "$fails" -eq 3 ] || [ "$fails" -eq 6 ] || (( fails > 10 && fails % 15 == 0 )); then
+  log "Restartuji tailscaled."
+  systemctl restart tailscaled
+elif [ "$fails" -ge 10 ]; then
+  now=$(date +%s)
+  last=$(cat "$STATE_DIR/last-reboot" 2>/dev/null || echo 0)
+  if (( now - last > 6 * 3600 )); then
+    echo "$now" > "$STATE_DIR/last-reboot"
+    echo 0 > "$STATE_DIR/fails"
+    log "Tailscale nejede ani po restartech, restartuji zařízení."
+    systemctl reboot
+  fi
+fi

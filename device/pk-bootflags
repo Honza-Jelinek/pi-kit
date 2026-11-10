@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Servisní přepínače na boot oddílu SD karty. Spouští ho při startu pk-bootflags.service.
+#
+# Soubor "pikit-unlock-ssh" na boot oddílu (ve Windows disk "bootfs") při startu
+# otevře SSH z místní sítě a smaže se. Vytvoří ho příkaz `pikit unlock-card` na PC.
+# Na místě u zákazníka bez internetu se tak dostaneš dovnitř: kartu vyndáš, v PC na ni
+# dáš soubor, vrátíš ji a připojíš se přes `ssh <jméno>-lan`.
+#
+# Kdo má kartu fyzicky v ruce, může ji stejně přenahrát, takže tohle nepřidává nový vektor útoku.
+set -uo pipefail
+
+for BOOT in /boot/firmware /boot; do
+  [ -d "$BOOT" ] && break
+done
+
+if [ -f "$BOOT/pikit-unlock-ssh" ]; then
+  rm -f "$BOOT/pikit-unlock-ssh"
+  /opt/pikit/bin/pk-firewall unlock
+  logger -t pikit-bootflags -- "SSH z místní sítě otevřeno souborem pikit-unlock-ssh na SD kartě."
+fi
